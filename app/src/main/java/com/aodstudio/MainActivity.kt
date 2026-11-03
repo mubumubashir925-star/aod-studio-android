@@ -139,6 +139,7 @@ fun AodStudioApp() {
     var showBattery by remember { mutableStateOf(true) }
     var showDay by remember { mutableStateOf(true) }
     var backgroundUri by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
     val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             try {
@@ -149,10 +150,11 @@ fun AodStudioApp() {
             backgroundUri = uri.toString()
         }
     }
-    val context = LocalContext.current
     val savedDesigns = remember { mutableStateListOf<SavedDesign>().apply { addAll(readSavedDesigns(context)) } }
     var showSaveDialog by remember { mutableStateOf(false) }
     var designName by remember { mutableStateOf("") }
+    var renameIndex by remember { mutableIntStateOf(-1) }
+    var showRenameDialog by remember { mutableStateOf(false) }
 
     val previewStyle = styles[selected]
     val previewTime = if (format == "12-hour") "10:45 PM" else previewStyle.time
@@ -235,7 +237,7 @@ fun AodStudioApp() {
                         SectionLabel("LIVE CUSTOM PREVIEW")
                         Spacer(Modifier.height(10.dp))
                         AodPreview(previewStyle, palette[customColor], previewTime, clockSize,
-                            fontFamily, alignment, showDate, showDay, showBattery)
+                            fontFamily, alignment, showDate, showDay, showBattery, backgroundUri)
                         Spacer(Modifier.height(22.dp))
 
                         EditorSection("Clock colour", "Choose a colour for your time") {
@@ -318,28 +320,45 @@ fun AodStudioApp() {
                                             Modifier.fillMaxWidth().padding(12.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
+                                            SavedDesignThumbnail(design)
+                                            Spacer(Modifier.width(10.dp))
                                             Column(Modifier.weight(1f)) {
-                                                Text(design.name, fontWeight = FontWeight.SemiBold)
+                                                Text(design.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
                                                 Text("${styles[design.styleIndex].title} • ${design.fontChoice} • ${design.clockSize.toInt()} sp",
-                                                    color = Color.Gray, fontSize = 11.sp)
-                                            }
-                                            TextButton(onClick = {
-                                                selected = design.styleIndex
-                                                customColor = design.colorIndex
-                                                clockSize = design.clockSize
-                                                fontChoice = design.fontChoice
-                                                alignment = design.alignment
-                                                format = design.format
-                                                showDate = design.showDate
-                                                showDay = design.showDay
-                                                showBattery = design.showBattery,
-                                                backgroundUri = design.backgroundUri
-                                            }) { Text("Apply") }
-                                            IconButton(onClick = {
-                                                savedDesigns.removeAt(index)
-                                                writeSavedDesigns(context, savedDesigns)
-                                            }) {
-                                                Icon(Icons.Default.DeleteOutline, "Delete design", tint = Color(0xFFFF8A8A))
+                                                    color = Color.Gray, fontSize = 10.sp, maxLines = 1)
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                    TextButton(onClick = {
+                                                        selected = design.styleIndex
+                                                        customColor = design.colorIndex
+                                                        clockSize = design.clockSize
+                                                        fontChoice = design.fontChoice
+                                                        alignment = design.alignment
+                                                        format = design.format
+                                                        showDate = design.showDate
+                                                        showDay = design.showDay
+                                                        showBattery = design.showBattery
+                                                        backgroundUri = design.backgroundUri
+                                                    }, contentPadding = PaddingValues(horizontal = 7.dp)) { Text("Apply") }
+                                                    IconButton(onClick = {
+                                                        designName = design.name
+                                                        renameIndex = index
+                                                        showRenameDialog = true
+                                                    }) {
+                                                        Icon(Icons.Default.Edit, "Rename design", tint = Accent)
+                                                    }
+                                                    IconButton(onClick = {
+                                                        savedDesigns.add(design.copy(name = "Copy of ${design.name}".take(30)))
+                                                        writeSavedDesigns(context, savedDesigns)
+                                                    }) {
+                                                        Icon(Icons.Default.ContentCopy, "Duplicate design", tint = Color.LightGray)
+                                                    }
+                                                    IconButton(onClick = {
+                                                        savedDesigns.removeAt(index)
+                                                        writeSavedDesigns(context, savedDesigns)
+                                                    }) {
+                                                        Icon(Icons.Default.DeleteOutline, "Delete design", tint = Color(0xFFFF8A8A))
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -364,6 +383,36 @@ fun AodStudioApp() {
                 Spacer(Modifier.height(18.dp))
             }
         }
+    }
+
+    if (showRenameDialog) {
+        AlertDialog(
+            onDismissRequest = { showRenameDialog = false },
+            title = { Text("Rename design") },
+            text = {
+                OutlinedTextField(
+                    value = designName,
+                    onValueChange = { designName = it.take(30) },
+                    label = { Text("Design name") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (renameIndex in savedDesigns.indices) {
+                        savedDesigns[renameIndex] = savedDesigns[renameIndex].copy(
+                            name = designName.trim().ifBlank { "My Design" }
+                        )
+                        writeSavedDesigns(context, savedDesigns)
+                    }
+                    showRenameDialog = false
+                }) { Text("Save name") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameDialog = false }) { Text("Cancel") }
+            },
+            containerColor = Panel
+        )
     }
 
     if (showSaveDialog) {
@@ -402,6 +451,45 @@ fun AodStudioApp() {
                 TextButton(onClick = { showSaveDialog = false }) { Text("Cancel") }
             },
             containerColor = Panel
+        )
+    }
+}
+
+@Composable
+private fun SavedDesignThumbnail(design: SavedDesign) {
+    val context = LocalContext.current
+    val bitmap by produceState<android.graphics.Bitmap?>(initialValue = null, design.backgroundUri) {
+        value = if (design.backgroundUri == null) null else withContext(Dispatchers.IO) {
+            try {
+                context.contentResolver.openInputStream(Uri.parse(design.backgroundUri))?.use {
+                    BitmapFactory.decodeStream(it)
+                }
+            } catch (_: Exception) { null }
+        }
+    }
+    Box(
+        Modifier.width(88.dp).height(72.dp).background(Color.Black, RoundedCornerShape(10.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap!!.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+        }
+        Text(
+            if (design.format == "12-hour") "10:45 PM" else "10:45",
+            color = palette[design.colorIndex],
+            fontSize = 17.sp,
+            fontWeight = FontWeight.Light,
+            fontFamily = when (design.fontChoice) {
+                "Serif" -> FontFamily.Serif
+                "Mono" -> FontFamily.Monospace
+                else -> FontFamily.SansSerif
+            },
+            maxLines = 1
         )
     }
 }
