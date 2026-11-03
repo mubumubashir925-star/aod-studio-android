@@ -1,6 +1,9 @@
 package com.aodstudio
 
 import android.os.Bundle
+import android.content.Context
+import org.json.JSONArray
+import org.json.JSONObject
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -22,6 +25,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 
 private val Ink = Color(0xFF080B12)
 private val Panel = Color(0xFF151B27)
@@ -37,6 +41,65 @@ private val styles = listOf(
     ClockStyle("Clean White", "10:45", "03 NOVEMBER 2026", Color(0xFFFFFFFF)),
     ClockStyle("Cyber", "10:45", "SYSTEM ONLINE  •  03 NOV", Color(0xFF71F2C3))
 )
+
+data class SavedDesign(
+    val name: String,
+    val styleIndex: Int,
+    val colorIndex: Int,
+    val clockSize: Float,
+    val fontChoice: String,
+    val alignment: String,
+    val format: String,
+    val showDate: Boolean,
+    val showDay: Boolean,
+    val showBattery: Boolean
+)
+
+private const val PREFS_NAME = "aod_studio_designs"
+private const val DESIGNS_KEY = "saved_designs"
+
+private fun readSavedDesigns(context: Context): List<SavedDesign> {
+    val raw = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .getString(DESIGNS_KEY, "[]") ?: "[]"
+    return try {
+        val array = JSONArray(raw)
+        (0 until array.length()).map { i ->
+            val item = array.getJSONObject(i)
+            SavedDesign(
+                name = item.optString("name", "My Design"),
+                styleIndex = item.optInt("styleIndex", 0).coerceIn(0, styles.lastIndex),
+                colorIndex = item.optInt("colorIndex", 0).coerceIn(0, palette.lastIndex),
+                clockSize = item.optDouble("clockSize", 56.0).toFloat().coerceIn(34f, 76f),
+                fontChoice = item.optString("fontChoice", "Sans"),
+                alignment = item.optString("alignment", "Center"),
+                format = item.optString("format", "24-hour"),
+                showDate = item.optBoolean("showDate", true),
+                showDay = item.optBoolean("showDay", true),
+                showBattery = item.optBoolean("showBattery", true)
+            )
+        }
+    } catch (_: Exception) { emptyList() }
+}
+
+private fun writeSavedDesigns(context: Context, designs: List<SavedDesign>) {
+    val array = JSONArray()
+    designs.forEach { design ->
+        array.put(JSONObject().apply {
+            put("name", design.name)
+            put("styleIndex", design.styleIndex)
+            put("colorIndex", design.colorIndex)
+            put("clockSize", design.clockSize.toDouble())
+            put("fontChoice", design.fontChoice)
+            put("alignment", design.alignment)
+            put("format", design.format)
+            put("showDate", design.showDate)
+            put("showDay", design.showDay)
+            put("showBattery", design.showBattery)
+        })
+    }
+    context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        .edit().putString(DESIGNS_KEY, array.toString()).apply()
+}
 
 private val palette = listOf(
     Color.White, Color(0xFFB7A8FF), Color(0xFF73D8E8),
@@ -63,6 +126,10 @@ fun AodStudioApp() {
     var showDate by remember { mutableStateOf(true) }
     var showBattery by remember { mutableStateOf(true) }
     var showDay by remember { mutableStateOf(true) }
+    val context = LocalContext.current
+    val savedDesigns = remember { mutableStateListOf<SavedDesign>().apply { addAll(readSavedDesigns(context)) } }
+    var showSaveDialog by remember { mutableStateOf(false) }
+    var designName by remember { mutableStateOf("") }
 
     val previewStyle = styles[selected]
     val previewTime = if (format == "12-hour") "10:45 PM" else previewStyle.time
@@ -185,6 +252,56 @@ fun AodStudioApp() {
                             EditorSwitch("Show battery", showBattery) { showBattery = it }
                         }
 
+                        Button(
+                            onClick = { designName = "My Design"; showSaveDialog = true },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(Icons.Default.Save, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Save this design")
+                        }
+
+                        if (savedDesigns.isNotEmpty()) {
+                            EditorSection("My saved designs", "${savedDesigns.size} design(s) stored on this phone") {
+                                savedDesigns.forEachIndexed { index, design ->
+                                    Card(
+                                        colors = CardDefaults.cardColors(containerColor = Panel),
+                                        shape = RoundedCornerShape(13.dp),
+                                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+                                    ) {
+                                        Row(
+                                            Modifier.fillMaxWidth().padding(12.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Column(Modifier.weight(1f)) {
+                                                Text(design.name, fontWeight = FontWeight.SemiBold)
+                                                Text("${styles[design.styleIndex].title} • ${design.fontChoice} • ${design.clockSize.toInt()} sp",
+                                                    color = Color.Gray, fontSize = 11.sp)
+                                            }
+                                            TextButton(onClick = {
+                                                selected = design.styleIndex
+                                                customColor = design.colorIndex
+                                                clockSize = design.clockSize
+                                                fontChoice = design.fontChoice
+                                                alignment = design.alignment
+                                                format = design.format
+                                                showDate = design.showDate
+                                                showDay = design.showDay
+                                                showBattery = design.showBattery
+                                            }) { Text("Apply") }
+                                            IconButton(onClick = {
+                                                savedDesigns.removeAt(index)
+                                                writeSavedDesigns(context, savedDesigns)
+                                            }) {
+                                                Icon(Icons.Default.DeleteOutline, "Delete design", tint = Color(0xFFFF8A8A))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         Card(colors = CardDefaults.cardColors(containerColor = Panel),
                             shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
                             Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -214,6 +331,44 @@ fun AodStudioApp() {
                 Spacer(Modifier.height(18.dp))
             }
         }
+    }
+
+    if (showSaveDialog) {
+        AlertDialog(
+            onDismissRequest = { showSaveDialog = false },
+            title = { Text("Save your design") },
+            text = {
+                OutlinedTextField(
+                    value = designName,
+                    onValueChange = { designName = it.take(30) },
+                    label = { Text("Design name") },
+                    singleLine = true
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val saved = SavedDesign(
+                        name = designName.trim().ifBlank { "My Design" },
+                        styleIndex = selected,
+                        colorIndex = customColor,
+                        clockSize = clockSize,
+                        fontChoice = fontChoice,
+                        alignment = alignment,
+                        format = format,
+                        showDate = showDate,
+                        showDay = showDay,
+                        showBattery = showBattery
+                    )
+                    savedDesigns.add(saved)
+                    writeSavedDesigns(context, savedDesigns)
+                    showSaveDialog = false
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSaveDialog = false }) { Text("Cancel") }
+            },
+            containerColor = Panel
+        )
     }
 }
 
