@@ -510,6 +510,7 @@ fun AodPreview(
                     letterSpacing = 1.sp, textAlign = textAlign)
             }
         }
+        }
     }
 }
 
