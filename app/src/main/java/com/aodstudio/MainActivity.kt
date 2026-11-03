@@ -1,6 +1,15 @@
 package com.aodstudio
 
 import android.os.Bundle
+import android.net.Uri
+import android.graphics.BitmapFactory
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
+import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
@@ -52,7 +61,8 @@ data class SavedDesign(
     val format: String,
     val showDate: Boolean,
     val showDay: Boolean,
-    val showBattery: Boolean
+    val showBattery: Boolean,
+    val backgroundUri: String?
 )
 
 private const val PREFS_NAME = "aod_studio_designs"
@@ -75,7 +85,8 @@ private fun readSavedDesigns(context: Context): List<SavedDesign> {
                 format = item.optString("format", "24-hour"),
                 showDate = item.optBoolean("showDate", true),
                 showDay = item.optBoolean("showDay", true),
-                showBattery = item.optBoolean("showBattery", true)
+                showBattery = item.optBoolean("showBattery", true),
+                backgroundUri = item.optString("backgroundUri", "").takeIf { it.isNotBlank() }
             )
         }
     } catch (_: Exception) { emptyList() }
@@ -95,6 +106,7 @@ private fun writeSavedDesigns(context: Context, designs: List<SavedDesign>) {
             put("showDate", design.showDate)
             put("showDay", design.showDay)
             put("showBattery", design.showBattery)
+            put("backgroundUri", design.backgroundUri ?: "")
         })
     }
     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -126,6 +138,17 @@ fun AodStudioApp() {
     var showDate by remember { mutableStateOf(true) }
     var showBattery by remember { mutableStateOf(true) }
     var showDay by remember { mutableStateOf(true) }
+    var backgroundUri by remember { mutableStateOf<String?>(null) }
+    val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            try {
+                context.contentResolver.takePersistableUriPermission(
+                    uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                )
+            } catch (_: Exception) { }
+            backgroundUri = uri.toString()
+        }
+    }
     val context = LocalContext.current
     val savedDesigns = remember { mutableStateListOf<SavedDesign>().apply { addAll(readSavedDesigns(context)) } }
     var showSaveDialog by remember { mutableStateOf(false) }
@@ -180,7 +203,7 @@ fun AodStudioApp() {
                         SectionLabel("LIVE PREVIEW")
                         Spacer(Modifier.height(10.dp))
                         AodPreview(previewStyle, palette[customColor], previewTime, clockSize,
-                            fontFamily, alignment, showDate, showDay, showBattery)
+                            fontFamily, alignment, showDate, showDay, showBattery, backgroundUri)
                         Spacer(Modifier.height(18.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("Ready-made designs", fontSize = 18.sp, fontWeight = FontWeight.SemiBold,
@@ -246,6 +269,27 @@ fun AodStudioApp() {
                             ChoiceRow(listOf("Left", "Center", "Right"), alignment) { alignment = it }
                         }
 
+                        EditorSection("Background image", "Use a photo from your phone") {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+                                OutlinedButton(onClick = { imagePicker.launch(arrayOf("image/*")) }, modifier = Modifier.weight(1f)) {
+                                    Icon(Icons.Default.Image, null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Choose photo")
+                                }
+                                if (backgroundUri != null) {
+                                    OutlinedButton(onClick = { backgroundUri = null }) {
+                                        Icon(Icons.Default.Close, null)
+                                        Text("Remove")
+                                    }
+                                }
+                            }
+                            Text(
+                                if (backgroundUri == null) "No custom background selected"
+                                else "Custom background selected",
+                                color = Color.Gray, fontSize = 11.sp
+                            )
+                        }
+
                         EditorSection("Display elements", "Choose what appears below the clock") {
                             EditorSwitch("Show date", showDate) { showDate = it }
                             EditorSwitch("Show day", showDay) { showDay = it }
@@ -288,7 +332,8 @@ fun AodStudioApp() {
                                                 format = design.format
                                                 showDate = design.showDate
                                                 showDay = design.showDay
-                                                showBattery = design.showBattery
+                                                showBattery = design.showBattery,
+                                                backgroundUri = design.backgroundUri
                                             }) { Text("Apply") }
                                             IconButton(onClick = {
                                                 savedDesigns.removeAt(index)
@@ -302,18 +347,6 @@ fun AodStudioApp() {
                             }
                         }
 
-                        Card(colors = CardDefaults.cardColors(containerColor = Panel),
-                            shape = RoundedCornerShape(14.dp), modifier = Modifier.fillMaxWidth()) {
-                            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Save, null, tint = Accent)
-                                Spacer(Modifier.width(10.dp))
-                                Column {
-                                    Text("Design preview only", fontWeight = FontWeight.SemiBold)
-                                    Text("Saving designs and background images will be added in the next stage.",
-                                        color = Color.Gray, fontSize = 12.sp)
-                                }
-                            }
-                        }
                         Spacer(Modifier.height(18.dp))
                     }
 
@@ -357,7 +390,8 @@ fun AodStudioApp() {
                         format = format,
                         showDate = showDate,
                         showDay = showDay,
-                        showBattery = showBattery
+                        showBattery = showBattery,
+                        backgroundUri = backgroundUri
                     )
                     savedDesigns.add(saved)
                     writeSavedDesigns(context, savedDesigns)
@@ -418,8 +452,19 @@ fun AodPreview(
     alignment: String,
     showDate: Boolean,
     showDay: Boolean,
-    showBattery: Boolean
+    showBattery: Boolean,
+    backgroundUri: String?
 ) {
+    val context = LocalContext.current
+    val backgroundBitmap by produceState<android.graphics.Bitmap?>(initialValue = null, backgroundUri) {
+        value = if (backgroundUri == null) null else withContext(Dispatchers.IO) {
+            try {
+                context.contentResolver.openInputStream(Uri.parse(backgroundUri))?.use {
+                    BitmapFactory.decodeStream(it)
+                }
+            } catch (_: Exception) { null }
+        }
+    }
     val horizontal = when (alignment) {
         "Left" -> Alignment.Start
         "Right" -> Alignment.End
@@ -432,7 +477,16 @@ fun AodPreview(
     }
     Card(colors = CardDefaults.cardColors(containerColor = Color.Black),
         shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth().height(205.dp)) {
-        Column(
+        Box(Modifier.fillMaxSize()) {
+            if (backgroundBitmap != null) {
+                Image(
+                    bitmap = backgroundBitmap!!.asImageBitmap(),
+                    contentDescription = "Custom AOD background",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+            Column(
             Modifier.fillMaxSize().padding(horizontal = 22.dp),
             horizontalAlignment = horizontal,
             verticalArrangement = Arrangement.Center
